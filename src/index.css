@@ -1,0 +1,14 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-[#f9f8ff] font-sans text-[#3b4083];
+  }
+}
+
+/* Custom Scrollbar จากโค้ดต้นฉบับ [cite: 189, 190, 191] */
+.custom-scrollbar::-webkit-scrollbar { height: 6px; width: 6px; }
+.custom-scrollbar::-webkit-scrollbar-track { background: #f9f8ff; }
+.custom-scrollbar::-webkit-scrollbar-thumb { background: #dbf2f2; border-radius: 20px; }
