@@ -58,7 +58,7 @@ const calculateSectionRisk = (sets) => {
     if (status === "Exceed Standard") maxRiskLevel = Math.max(maxRiskLevel, 2);
     else if (status === "Potential Risk") maxRiskLevel = Math.max(maxRiskLevel, 1);
   });
-  // แก้ไข Syntax Error สำหรับ Vercel โดยการครอบวงเล็บรอบ JSX ใน Object
+  // ครอบวงเล็บรอบ JSX ป้องกัน Syntax Error ในระบบ Build
   if (maxRiskLevel === 2) return { label: "High Risk", color: "bg-red-500", icon: (<AlertOctagon size={12}/>) };
   if (maxRiskLevel === 1) return { label: "Potential Risk", color: "bg-orange-500", icon: (<AlertTriangle size={12}/>) };
   return { label: "No Risk", color: "bg-emerald-500", icon: (<CheckCircle size={12}/>) };
@@ -74,8 +74,8 @@ const checkHumidityDanger = (humidity, dept) => {
 };
 
 const getTodoText = (dept) => dept === 'Fabric Warehouse' ?
-  "สุ่มตรวจเช็คค่าความชื้นกับผ้าที่เก็บไว้บนพาเลทเริ่มจากบริเวณศูนย์กลางของ WH 1 จุด และอีก 4 จุดจากทั้ง 4 มุมห้อง..." : 
-  "สุ่มตรวจเช็คค่าความชื้นกับผ้าที่เก็บไว้ภายในห้องตัดเริ่มจากบริเวณศูนย์กลางของห้อง 1จุด และอีก 4 จุดจากทั้ง 4 มุมห้อง...";
+  "สุ่มตรวจเช็คค่าความชื้นกับผ้าที่เก็บไว้บนพาเลท..." : 
+  "สุ่มตรวจเช็คค่าความชื้นกับผ้าที่เก็บไว้ภายในห้องตัด...";
 
 const ProductDataInputs = ({ title, icon: Icon, sets, setter, colorClass }) => {
   const updateSet = (index, field, value) => {
@@ -127,6 +127,7 @@ const App = () => {
   const [loading, setLoading] = useState(true);
   const [currentEntryId, setCurrentEntryId] = useState(null);
 
+  // ดึงข้อมูลจาก LocalStorage (Mock Mode)
   useEffect(() => {
     const saved = localStorage.getItem('hygro_mock_data');
     if (saved) setRecords(JSON.parse(saved));
