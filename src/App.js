@@ -1,0 +1,522 @@
+[cite_start]import React, { useState, useEffect, useMemo } from 'react'; [cite: 1]
+[cite_start]import { initializeApp } from 'firebase/app'; [cite: 1]
+import { 
+  getFirestore, collection, addDoc, onSnapshot, query, Timestamp,
+  doc, updateDoc, arrayUnion 
+[cite_start]} from 'firebase/firestore'; [cite: 2]
+import { 
+  getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken 
+[cite_start]} from 'firebase/auth'; [cite: 3]
+import { 
+  Layout, Factory as FactoryIcon, Building2, ClipboardCheck, History as HistoryIcon, 
+  PlusCircle, ChevronLeft, AlertTriangle, CheckCircle2, Thermometer, Droplets, 
+  User as UserIcon, Clock, Smartphone, ChevronRight, Settings2, Database, Monitor, 
+  Calendar, Activity, ArrowRight, CheckCircle, AlertCircle, Sparkles, Loader2, X, 
+  FileText, Lightbulb, MapPin, Save, Check, RotateCcw, Info, Box, Layers, 
+  Map as MapIcon, ShieldAlert, Tag, Hash, AlertOctagon, RefreshCw, Copy 
+[cite_start]} from 'lucide-react'; [cite: 4, 5]
+
+// --- Firebase Configuration (ปรับปรุงให้ใช้ Environment Variables) ---
+[cite_start]const firebaseConfig = JSON.parse(process.env.REACT_APP_FIREBASE_CONFIG || '{}'); [cite: 5, 6]
+[cite_start]const app = initializeApp(firebaseConfig); [cite: 6]
+[cite_start]const auth = getAuth(app); [cite: 6]
+[cite_start]const db = getFirestore(app); [cite: 6]
+const appId = process.env.REACT_APP_ID || [cite_start]'thermo-hygro-app'; [cite: 7]
+
+// --- Constants & Standards ---
+const FABRIC_STANDARDS = [
+  { label: "100% Cotton", limit: 56 },
+  { label: "90% Cotton 10% Elastane/Spandex (Cotton content 85% - 99%)", limit: 56 },
+  { label: "70% Cotton 30% Polyamide (Cotton content 65% - 75%)", limit: 59 },
+  { label: "80% Cotton 20% Polyester (Cotton content 75%-85%)", limit: 59 },
+  { label: "70% Cotton 30% Polyester (Cotton content 65% - 75%)", limit: 53 },
+  { label: "60% Cotton 40% Polyester (Cotton content 55% - 65%)", limit: 45 },
+  [cite_start]{ label: "50% Cotton 50% Polyester (Cotton content 45% - 55%)", limit: 37 }, [cite: 8]
+  { label: "50% Cotton 50% Polyacrylic (Cotton content 45% - 55%)", limit: 62 },
+  { label: "100% Viscose/ Rayon/ Modal", limit: 59 },
+  { label: "90% Viscose 10% Elastane/Spandex (Viscose content 85% - 99%)", limit: 59 },
+  { label: "50% Viscose 50% Cotton (Viscose content 45% - 55%)", limit: 48 },
+  { label: "80% Viscose 20% Polyamide (Viscose content 75%-85%)", limit: 59 },
+  { label: "50% Viscose 50% Polyester (Viscose content 45% - 55%)", limit: 57 },
+  [cite_start]{ label: "30% Viscose 70% Polyester (Viscose content 25% - 35%)", limit: 62 }, [cite: 9]
+  { label: "100% Linen/ Flax", limit: 67 },
+  { label: "60% Linen 40% Cotton (Linen content 55% - 65%)", limit: 47 },
+  { label: "100% Polyamide", limit: 67 },
+  { label: "100% Polyacrylic", limit: 83 },
+  { label: "100% Polyester", limit: 57 },
+  { label: "100% Leather", limit: 22 },
+  { label: "Packing paper, packaging carton boxes and corrugated export cartons", limit: 10 }
+[cite_start]]; [cite: 7, 8, 9]
+
+const ROOM_LINE_DATA = {
+  "A": ["PD-SA01", "PD-SA02", "PD-SA03", "PD-SA04", "PD-SA05"],
+  "B": ["PD-SB01", "PD-SB02", "PD-SB03", "PD-SB04", "PD-SB05"],
+  "H": ["PD-SH01", "PD-SH02", "PD-SH03", "PD-SH04", "PD-SH05"]
+[cite_start]}; [cite: 10]
+
+[cite_start]const FACTORIES = ["TTT", "TN", "TM2", "VAS"]; [cite: 11]
+const DEPARTMENTS = [
+  "Fabric Warehouse", "Heat Transfer", "Cutting Room", "Store Acc(Heat Tranfer)",
+  "Embroidery", "Sample Room", "Print", "Pad Print", "Supermarket", "Lab",
+  "Final Inspection", "Finished Goods WH", "Sublimation", "Sewing Room"
+[cite_start]]; [cite: 11]
+[cite_start]const GARMENT_LABELS = ["Humidty% 1st Garment", "Humidty% 2nd Garment", "Humidty% 3rd Garment"]; [cite: 12]
+
+// --- Helper Functions ---
+const getSetStatus = (fabric, hum) => {
+  [cite_start]if (!fabric || hum === '') return null; [cite: 13]
+  [cite_start]const std = FABRIC_STANDARDS.find(s => s.label === fabric); [cite: 14]
+  [cite_start]if (!std) return null; [cite: 14]
+  [cite_start]const h = parseFloat(hum); [cite: 14]
+  [cite_start]if (h > std.limit) return "Exceed Standard"; [cite: 15]
+  [cite_start]if (h === std.limit) return "Potential Risk"; [cite: 15]
+  [cite_start]return "Normal"; [cite: 15]
+};
+
+const calculateSectionRisk = (sets) => {
+  [cite_start]if (!sets || sets.length === 0) return null; [cite: 16]
+  [cite_start]let maxRiskLevel = 0; [cite: 16]
+  sets.forEach(set => {
+    [cite_start]const status = getSetStatus(set.fabric, set.hum); [cite: 17]
+    [cite_start]if (status === "Exceed Standard") maxRiskLevel = Math.max(maxRiskLevel, 2); [cite: 17]
+    [cite_start]else if (status === "Potential Risk") maxRiskLevel = Math.max(maxRiskLevel, 1); [cite: 17]
+  });
+  [cite_start]if (maxRiskLevel === 2) return { label: "High Risk", color: "bg-red-500", icon: <AlertOctagon size={12}/> }; [cite: 18]
+  [cite_start]if (maxRiskLevel === 1) return { label: "Potential Risk", color: "bg-orange-500", icon: <AlertTriangle size={12}/> }; [cite: 19]
+  [cite_start]return { label: "No Risk", color: "bg-emerald-500", icon: <CheckCircle size={12}/> }; [cite: 20]
+};
+
+[cite_start]const isPrintingDept = (dept) => dept === 'Print'; [cite: 20]
+[cite_start]const isSewingRoom = (dept) => dept === 'Sewing Room'; [cite: 21]
+const getAMPMOptions = (dept) => isPrintingDept(dept) ? [cite_start]["AM1", "AM2", "PM1", "PM2", "OT1", "OT2"] : ["AM", "PM", "OT"]; [cite: 21, 22]
+const checkHumidityDanger = (humidity, dept) => {
+  [cite_start]const h = parseFloat(humidity); [cite: 23]
+  [cite_start]if (!h) return false; [cite: 23]
+  [cite_start]return isPrintingDept(dept) ? h > 50 : h > 65; [cite: 23, 24]
+};
+
+const getTodoText = (dept) => dept === 'Fabric Warehouse' ?
+  "สุ่มตรวจเช็คค่าความชื้นกับผ้าที่เก็บไว้บนพาเลทเริ่มจากบริเวณศูนย์กลางของ WH 1 จุด และอีก 4 จุดจากทั้ง 4 มุมห้อง ในพื้นที่ WH *หากความชื้นไม่ผ่านเกณฑ์ให้ตรวจความชื้นม้วนผ้า 100% ในรัศมี 1 เมตรรอบตัวหากยังพบว่าความชื้นเกินให้ขยายไปรอบๆครั้งละ 1 เมตรจนกว่าจะไม่พบความชื้น ผ้าที่มีความชื้นเกินให้ดำเนินการแยกผ้าที่มีปัญหาออกมาเพื่อทำการลดความความชื้น ในพื้นที่ที่ได้จัดเตรียมไว้" : 
+  [cite_start]"สุ่มตรวจเช็คค่าความชื้นกับผ้าที่เก็บไว้ภายในห้องตัดเริ่มจากบริเวณศูนย์กลางของห้อง 1จุด และอีก 4 จุดจากทั้ง 4 มุมห้อง ในพื้นที่หรือตามจุดที่กำหนดไว้ *หากความชื้นไม่ผ่านเกณฑ์ให้ตรวจความชื้นชิ้นงาน 100% ในรัศมี 1 เมตร รอบตัวหากยังพบว่าความชื้นเกินให้ขยายไปรอบๆครั้งละ 1 เมตรจนกว่าจะไม่พบความชื้น ชิ้นงานที่มีความชื้นเกินให้ดำเนินการแยกชิ้นงานที่มีปัญหาออกมาเพื่อทำการลดความความชื้น ในพื้นที่ที่ได้จัดเตรียมไว้"; [cite: 24, 25]
+
+// --- Sub-Components ---
+const ProductDataInputs = ({ title, icon: Icon, sets, setter, colorClass }) => {
+  const updateSet = (index, field, value) => {
+    [cite_start]const newSets = [...sets]; [cite: 26]
+    [cite_start]newSets[index][field] = value; [cite: 27]
+    [cite_start]setter(newSets); [cite: 27]
+  };
+
+  const applyFirstToAll = () => {
+    [cite_start]const firstSet = sets[0]; [cite: 27]
+    const newSets = sets.map((set, index) => {
+      [cite_start]if (index === 0) return set; [cite: 28]
+      [cite_start]return { ...set, cjo: firstSet.cjo, po: firstSet.po, fabric: firstSet.fabric }; [cite: 28]
+    });
+    [cite_start]setter(newSets); [cite: 29]
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className={`flex items-center justify-between p-3 ${colorClass} rounded-2xl`}>
+        <div className="flex items-center gap-2">
+          <Icon size={18} />
+          <span className="text-[11px] font-black uppercase tracking-[0.2em]">{title}</span>
+        </div>
+        <button type="button" onClick={applyFirstToAll} className="flex items-center gap-1.5 px-3 py-1 bg-white/50 hover:bg-white rounded-lg transition-all text-[9px] font-black uppercase border border-current/20 shadow-sm active:scale-95">
+          [cite_start]<Copy size={12} /> Apply Info to All [cite: 29, 30]
+        </button>
+      </div>
+      <div className="grid gap-6">
+        {sets.map((set, i) => (
+          <div key={i} className="bg-white p-6 rounded-[2rem] border border-[#F1EDFF] shadow-sm space-y-4">
+            [cite_start]<div className="text-[10px] font-black text-slate-300 uppercase tracking-widest">{GARMENT_LABELS[i] || `Humidity% ${i + 1}th Garment`}</div> [cite: 30]
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="space-y-1">
+                <label className="text-[9px] font-black text-[#8f8cb8] uppercase tracking-wider">CJO</label>
+                [cite_start]<input type="text" value={set.cjo} onChange={e => updateSet(i, 'cjo', e.target.value)} className="w-full p-3 bg-[#f9f8ff] border border-slate-100 rounded-xl outline-none text-xs font-bold text-[#3b4083] focus:border-[#7ab6b5]" /> [cite: 31]
+              </div>
+              <div className="space-y-1">
+                <label className="text-[9px] font-black text-[#8f8cb8] uppercase tracking-wider">PO</label>
+                [cite_start]<input type="text" value={set.po} onChange={e => updateSet(i, 'po', e.target.value)} className="w-full p-3 bg-[#f9f8ff] border border-slate-100 rounded-xl outline-none text-xs font-bold text-[#3b4083] focus:border-[#7ab6b5]" /> [cite: 32]
+              </div>
+              <div className="space-y-1">
+                [cite_start]<label className="text-[9px] font-black text-[#8f8cb8] uppercase tracking-wider">Fabric Type</label> [cite: 32, 33]
+                <select value={set.fabric} onChange={e => updateSet(i, 'fabric', e.target.value)} className="w-full p-3 bg-[#f9f8ff] border border-slate-100 rounded-xl outline-none text-[10px] font-bold text-[#3b4083] appearance-none cursor-pointer">
+                  <option value="">Select Fabric</option>
+                  [cite_start]{FABRIC_STANDARDS.map(s => <option key={s.label} value={s.label}>{s.label}</option>)} [cite: 33]
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-[9px] font-black text-[#8f8cb8] uppercase tracking-wider">Humidity (%)</label>
+                [cite_start]<input type="number" step="0.1" value={set.hum} onChange={e => updateSet(i, 'hum', e.target.value)} className="w-full p-3 bg-[#f9f8ff] border border-slate-100 rounded-xl outline-none text-xs font-black text-[#3b4083] focus:border-[#7ab6b5]" /> [cite: 34]
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+const App = () => {
+  [cite_start]const [user, setUser] = useState(null); [cite: 36]
+  [cite_start]const [view, setView] = useState('home'); [cite: 36]
+  [cite_start]const [selectedFactory, setSelectedFactory] = useState(''); [cite: 37]
+  [cite_start]const [selectedDept, setSelectedDept] = useState(''); [cite: 37]
+  [cite_start]const [activeTypeTab, setActiveTypeTab] = useState('Environment'); [cite: 37]
+  [cite_start]const [records, setRecords] = useState([]); [cite: 37]
+  [cite_start]const [loading, setLoading] = useState(true); [cite: 38]
+  [cite_start]const [currentEntryId, setCurrentEntryId] = useState(null); [cite: 38]
+
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        [cite_start]const token = process.env.REACT_APP_INITIAL_AUTH_TOKEN; [cite: 39]
+        if (token) {
+          [cite_start]await signInWithCustomToken(auth, token); [cite: 39]
+        } else {
+          [cite_start]await signInAnonymously(auth); [cite: 39]
+        }
+      } catch (error) { console.error("Auth error:", error); [cite_start]} [cite: 39, 40]
+    };
+    initAuth();
+    [cite_start]const unsubscribe = onAuthStateChanged(auth, setUser); [cite: 40]
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    [cite_start]if (!user) return; [cite: 41]
+    [cite_start]const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'records')); [cite: 41]
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      [cite_start]const fetched = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })); [cite: 41]
+      [cite_start]const sorted = fetched.sort((a, b) => (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0)); [cite: 41, 42]
+      [cite_start]setRecords(sorted); [cite: 42]
+      [cite_start]setLoading(false); [cite: 42]
+    }, (error) => {
+      console.error("Firestore error:", error);
+      setLoading(false);
+    });
+    return () => unsubscribe();
+  }, [user]);
+
+  const getActionStatus = (record) => {
+    [cite_start]if (record.status === 'Resolved') return "Resolved"; [cite: 43]
+    if (record.type === 'Product') {
+      [cite_start]const semiRisk = calculateSectionRisk(record.semi_sets)?.label; [cite: 44]
+      [cite_start]const prodRisk = calculateSectionRisk(record.product_sets)?.label; [cite: 44]
+      [cite_start]if (semiRisk === "High Risk" || prodRisk === "High Risk") return "Take Action"; [cite: 45]
+      const hadHighRisk = (record.product_history || []).some(h => {
+        const sRisk = calculateSectionRisk(h.semi_sets)?.label;
+        const pRisk = calculateSectionRisk(h.product_sets)?.label;
+        return sRisk === "High Risk" || pRisk === "High Risk";
+      [cite_start]}); [cite: 46]
+      return hadHighRisk ? [cite_start]"Resolved" : "No action needed"; [cite: 47]
+    }
+    return checkHumidityDanger(record.humidity, record.department) ? [cite_start]"Take Action" : "No action needed"; [cite: 47, 48]
+  };
+
+  // --- Views ---
+  const HomeView = () => (
+    <div className="max-w-5xl mx-auto p-4 space-y-10 animate-in fade-in duration-700">
+      <section className="relative overflow-hidden bg-gradient-to-br from-[#3b4083] to-[#8f8cb8] rounded-[2.5rem] p-8 md:p-12 text-white shadow-2xl">
+        <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-8">
+          <div className="text-center md:text-left space-y-4">
+            [cite_start]<div className="inline-flex items-center gap-2 bg-white/20 backdrop-blur-md px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-widest"><Settings2 size={14} /> Monitoring</div> [cite: 48, 49]
+            [cite_start]<h1 className="text-4xl md:text-5xl font-extrabold leading-tight tracking-tighter">HygroTrack <br /><span className="text-[#dbf2f2]">V2.4.2 Workflows</span></h1> [cite: 49]
+            [cite_start]<p className="text-[#F1EDFF] text-lg opacity-90 max-w-md">ระบบบันทึกและตรวจสอบค่าความชื้นสภาวะแวดล้อมและผลิตภัณฑ์อัจฉริยะ</p> [cite: 49]
+          </div>
+          [cite_start]<Monitor size={80} className="text-[#dbf2f2] opacity-80 hidden lg:block" /> [cite: 49]
+        </div>
+      </section>
+      <div className="grid lg:grid-cols-12 gap-8 items-start">
+        <section className="lg:col-span-4 space-y-4">
+          [cite_start]<div className="flex items-center gap-2 px-2 text-[#3b4083]"><FactoryIcon size={20} /><h2 className="text-xl font-bold uppercase tracking-tighter text-[#3b4083]">Factory</h2></div> [cite: 50]
+          <div className="grid grid-cols-2 gap-3">
+            {FACTORIES.map(f => (
+              [cite_start]<button key={f} onClick={() => setSelectedFactory(f)} className={`p-6 rounded-[2rem] font-bold transition-all border-2 ${selectedFactory === f ? 'bg-[#3b4083] text-white shadow-xl scale-105 border-transparent' : 'bg-white border-[#F1EDFF] text-[#8f8cb8] hover:border-[#7ab6b5]'}`}>{f}</button> [cite: 50, 51]
+            ))}
+          </div>
+        </section>
+        <section className="lg:col-span-8 space-y-4">
+          [cite_start]<div className="flex items-center gap-2 px-2 text-[#3b4083]"><Layout size={20} /><h2 className="text-xl font-bold uppercase tracking-tighter text-[#3b4083]">Department</h2></div> [cite: 51]
+          <div className="bg-white p-6 rounded-[2.5rem] border border-[#F1EDFF] shadow-sm">
+            [cite_start]<div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-[420px] overflow-y-auto pr-2 custom-scrollbar"> [cite: 51, 52]
+              {DEPARTMENTS.map(d => (
+                [cite_start]<button key={d} onClick={() => { setSelectedDept(d); setActiveTypeTab('Environment'); }} className={`flex items-center justify-between p-4 rounded-2xl transition-all ${selectedDept === d ? 'bg-[#3b4083] text-white shadow-md' : 'bg-[#f9f8ff] text-[#8f8cb8] hover:bg-[#F1EDFF]'}`}><span className="font-medium">{d}</span><ChevronRight size={16} className={selectedDept === d ? 'opacity-100' : 'opacity-0'} /></button> [cite: 52, 53]
+              ))}
+            </div>
+          </div>
+        </section>
+      </div>
+      <div className="flex justify-center pt-4"><button disabled={!selectedFactory || [cite_start]!selectedDept} onClick={() => setView('dashboard')} className="bg-[#3b4083] text-white px-24 py-5 rounded-full font-black text-xl disabled:opacity-20 transition-all shadow-2xl uppercase tracking-[0.2em] hover:scale-105 active:scale-95">Select</button></div> [cite: 53, 54]
+    </div>
+  );
+
+  const DashboardView = () => {
+    [cite_start]const [statusFilter, setStatusFilter] = useState('all'); [cite: 55]
+    [cite_start]const baseFiltered = useMemo(() => records.filter(r => r.factory === selectedFactory && r.department === selectedDept), [records, selectedFactory, selectedDept]); [cite: 56]
+    const typeFiltered = useMemo(() => {
+      [cite_start]const targetType = isSewingRoom(selectedDept) ? activeTypeTab : 'Environment'; [cite: 57]
+      return baseFiltered.filter(r => r.type === targetType);
+    }, [baseFiltered, selectedDept, activeTypeTab]);
+    const stats = useMemo(() => {
+      [cite_start]const takeAction = typeFiltered.filter(r => getActionStatus(r) === 'Take Action').length; [cite: 58]
+      [cite_start]const resolved = typeFiltered.filter(r => getActionStatus(r) === 'Resolved').length; [cite: 58]
+      [cite_start]return { all: typeFiltered.length, takeAction, resolved, safe: typeFiltered.length - takeAction - resolved }; [cite: 58]
+    }, [typeFiltered]);
+    [cite_start]const finalFiltered = useMemo(() => statusFilter === 'all' ? typeFiltered : typeFiltered.filter(r => getActionStatus(r) === statusFilter), [typeFiltered, statusFilter]); [cite: 59]
+    const groupedRecords = finalFiltered.reduce((groups, r) => {
+      [cite_start]if (!groups[r.date]) groups[r.date] = []; [cite: 60]
+      groups[r.date].push(r);
+      return groups;
+    }, {});
+    const sortedDates = Object.keys(groupedRecords).sort((a, b) => {
+      [cite_start]const [d1, m1, y1] = a.split('/').map(Number); [cite: 61]
+      const [d2, m2, y2] = b.split('/').map(Number);
+      [cite_start]return new Date(y2, m2 - 1, d2) - new Date(y1, m1 - 1, y1); [cite: 61]
+    });
+
+    const renderProductSets = (title, Icon, sets, risk) => (
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          [cite_start]<div className="text-[10px] font-black text-[#8f8cb8] uppercase tracking-widest flex items-center gap-2"><Icon size={14} /> {title}</div> [cite: 62]
+          [cite_start]{sets && risk && <div className={`flex items-center gap-1 px-3 py-1 rounded-lg text-[9px] font-black uppercase ${risk.color} text-white`}>{risk.icon} {risk.label}</div>} [cite: 62, 63]
+        </div>
+        <div className="grid gap-3">
+          {sets?.map((set, i) => {
+            [cite_start]const status = getSetStatus(set.fabric, set.hum); [cite: 63]
+            return (
+              <div key={i} className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex items-center justify-between">
+                <div className="flex-1 min-w-0">
+                  [cite_start]<div className="text-[8px] font-black text-slate-300">{GARMENT_LABELS[i] || `Garment ${i + 1}`}</div> [cite: 64, 65]
+                  <div className="text-[11px] font-bold text-[#3b4083] truncate">{set.cjo} | [cite_start]{set.po}</div> [cite: 65, 66]
+                  [cite_start]<div className="text-[8px] text-[#8f8cb8] font-bold truncate mt-0.5">{set.fabric}</div> [cite: 66]
+                </div>
+                <div className="text-right ml-4">
+                  <div className={`text-xl font-black ${status === 'Exceed Standard' ? 'text-red-500' : status === 'Potential Risk' ? [cite_start]'text-orange-500' : 'text-[#3b4083]'}`}>{set.hum}%</div> [cite: 66, 67]
+                  {status && <div className={`text-[8px] font-black uppercase px-2 py-0.5 rounded inline-block mt-1 ${status === 'Exceed Standard' ? 'bg-red-500 text-white animate-pulse' : status === 'Potential Risk' ? [cite_start]'bg-orange-500 text-white' : 'bg-emerald-500 text-white'}`}>{status}</div>} [cite: 67, 68]
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+
+    return (
+      <div className="max-w-7xl mx-auto p-4 space-y-6 animate-in slide-in-from-right-4 duration-300">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          [cite_start]<button onClick={() => setView('home')} className="flex items-center gap-2 text-[#3b4083] font-black uppercase text-sm group"><ChevronLeft size={20} className="group-hover:-translate-x-1 transition-transform" /> Home</button> [cite: 70]
+          {isSewingRoom(selectedDept) && (
+            <div className="bg-[#F1EDFF] p-1 rounded-full flex gap-1 shadow-inner border border-[#3b4083]/10">
+              [cite_start]{['Environment', 'Product'].map(t => <button key={t} onClick={() => setActiveTypeTab(t)} className={`px-8 py-2 rounded-full text-[10px] font-black uppercase transition-all ${activeTypeTab === t ? 'bg-[#3b4083] text-white shadow-md' : 'text-[#8f8cb8] hover:text-[#3b4083]'}`}>{t}</button>)} [cite: 70, 71]
+            </div>
+          )}
+          <div className="flex items-center gap-3">
+            [cite_start]<span className="px-4 py-1.5 bg-[#3b4083] text-white rounded-full text-[10px] font-black uppercase tracking-widest">{selectedFactory}</span> [cite: 71, 72]
+            [cite_start]<span className="px-4 py-1.5 bg-[#7ab6b5] text-white rounded-full text-[10px] font-black uppercase tracking-widest">{selectedDept}</span> [cite: 72]
+          </div>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          <button onClick={() => setStatusFilter('all')} className={`p-4 rounded-[2.5rem] border-2 transition-all flex flex-col items-center ${statusFilter === 'all' ? [cite_start]'bg-[#3b4083] text-white shadow-xl border-transparent' : 'bg-white border-[#F1EDFF] text-[#8f8cb8]'}`}><span className="text-[9px] font-black uppercase opacity-60">Total</span><span className="text-2xl font-black">{stats.all}</span></button> [cite: 72, 73]
+          <button onClick={() => setStatusFilter('No action needed')} className={`p-4 rounded-[2.5rem] border-2 transition-all flex flex-col items-center ${statusFilter === 'No action needed' ? [cite_start]'bg-[#0cc784] text-white shadow-xl border-transparent' : 'bg-white border-[#F1EDFF] text-[#0cc784]'}`}><span className="text-[9px] font-black uppercase opacity-80">Safe</span><span className="text-2xl font-black">{stats.safe}</span></button> [cite: 73, 74]
+          <button onClick={() => setStatusFilter('Resolved')} className={`p-4 rounded-[2.5rem] border-2 transition-all flex flex-col items-center ${statusFilter === 'Resolved' ? [cite_start]'bg-[#3b4083] text-[#dbf2f2] shadow-xl border-transparent' : 'bg-white border-[#F1EDFF] text-[#3b4083]'}`}><span className="text-[9px] font-black uppercase opacity-80">Resolved</span><span className="text-2xl font-black">{stats.resolved}</span></button> [cite: 74, 75]
+          <button onClick={() => setStatusFilter('Take Action')} className={`p-4 rounded-[2.5rem] border-2 transition-all flex flex-col items-center ${statusFilter === 'Take Action' ? [cite_start]'bg-[#ffbc5e] text-white shadow-xl border-transparent' : 'bg-white border-[#F1EDFF] text-[#ffbc5e]'}`}><span className="text-[9px] font-black uppercase opacity-80">Action</span><span className="text-2xl font-black">{stats.takeAction}</span></button> [cite: 75, 76]
+          <button onClick={() => { setView('form'); setCurrentEntryId(null); [cite_start]}} className="p-4 rounded-[2.5rem] bg-[#dbf2f2] border-2 border-[#7ab6b5] text-[#3b4083] flex flex-col items-center justify-center group active:scale-95 transition-all"><PlusCircle size={24} /><span className="text-[9px] font-black uppercase mt-1">New Entry</span></button> [cite: 76, 77]
+        </div>
+        <div className="space-y-12 pb-20">
+          {sortedDates.length === 0 ? (
+            [cite_start]<div className="text-center py-24 bg-white rounded-[3rem] border-2 border-dashed border-[#F1EDFF] text-[#8f8cb8]"><Database size={48} className="mx-auto mb-4 opacity-20" /><p className="font-bold uppercase tracking-widest text-xs">No {activeTypeTab} records found.</p></div> [cite: 77, 78]
+          ) : sortedDates.map(date => (
+            <div key={date} className="bg-white border border-[#F1EDFF] rounded-[3rem] shadow-sm overflow-hidden flex flex-col animate-in fade-in duration-500">
+              [cite_start]<div className="bg-[#3b4083] px-10 py-6 text-white flex items-center justify-between"><div className="flex items-center gap-4"><Calendar size={24} className="text-[#dbf2f2]" /><h3 className="text-2xl font-black tracking-tighter uppercase">{date}</h3></div><span className="bg-[#8f8cb8]/40 px-4 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest">{(isSewingRoom(selectedDept) ? activeTypeTab : 'Environment')} Analysis</span></div> [cite: 79]
+              <div className="overflow-x-auto custom-scrollbar">
+                <table className="w-full text-left border-collapse">
+                  <thead><tr className="bg-[#f9f8ff] border-b border-[#F1EDFF] text-[10px] font-black text-[#8f8cb8] uppercase tracking-[0.2em]"><th className="px-8 py-5">Time Slot</th>{ (isSewingRoom(selectedDept) && activeTypeTab === 'Product') ? (<><th className="px-8 py-5">Room</th><th className="px-8 py-5">Line</th><th className="px-8 py-5">Operator</th><th className="px-8 py-5">TimeStamp</th><th className="px-8 py-5 text-center">Status</th></>) [cite_start]: (<><th className="px-8 py-5">Temp</th><th className="px-8 py-5">Hygro</th><th className="px-8 py-5">Operator</th><th className="px-8 py-5 text-center">Status</th></>)}</tr></thead> [cite: 80, 81, 82, 83, 84, 85]
+                  <tbody className="divide-y divide-[#F1EDFF]">
+                    {groupedRecords[date].map(record => {
+                      [cite_start]const status = getActionStatus(record); [cite: 86]
+                      [cite_start]const isDanger = status === 'Take Action', isResolved = status === 'Resolved', isProd = record.type === 'Product'; [cite: 87]
+                      [cite_start]const time = record.timestamp?.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }); [cite: 88]
+                      return (
+                        <React.Fragment key={record.id}>
+                          <tr className={`hover:bg-[#dbf2f2]/20 transition-colors ${isDanger ? 'bg-[#ffbc5e]/5' : ''}`}>
+                            [cite_start]<td className="px-8 py-6"><div className="text-sm font-black text-[#3b4083] uppercase">{record.ampm}</div></td> [cite: 89]
+                            {isProd ? (<><td className="px-8 py-6 font-bold text-sm text-[#3b4083]">Room {record.room}</td><td className="px-8 py-6"><span className="text-[10px] bg-[#F1EDFF] text-[#3b4083] px-3 py-1 rounded-lg font-black uppercase">{record.line}</span></td><td className="px-8 py-6 font-bold text-sm text-[#3b4083]">{record.user}</td><td className="px-8 py-6 font-black text-[10px] text-[#8f8cb8]">{time}</td><td className="px-8 py-6 text-center"><span className={`inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-[10px] font-black uppercase border ${isDanger ? 'bg-[#ffbc5e]/10 text-[#ffbc5e] border-[#ffbc5e]' : isResolved ? 'bg-[#3b4083]/10 text-[#3b4083] border-[#3b4083]' : 'bg-[#0cc784]/10 text-[#0cc784] border-[#0cc784]'}`}>{isDanger ? <Activity size={12} /> : <CheckCircle2 size={12} />}{status}</span></td></>) : (<><td className="px-8 py-6 font-black text-xl text-[#ffbc5e]">{record.temperature}°C</td><td className="px-8 py-6"><div className={`flex items-center gap-1.5 font-black text-xl ${isDanger ? 'text-[#ffbc5e]' : 'text-[#7ab6b5]'}`}>{record.humidity}%</div></td><td className="px-8 py-6 font-bold text-sm text-[#3b4083]">{record.user}</td><td className="px-8 py-6 text-center"><span className={`inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-[10px] font-black uppercase border ${isDanger ? 'bg-[#ffbc5e]/10 text-[#ffbc5e] border-[#ffbc5e]' : isResolved ? 'bg-[#3b4083]/10 text-[#3b4083] border-[#3b4083]' : 'bg-[#0cc784]/10 text-[#0cc784] border-[#0cc784]'}`}>{isDanger ? [cite_start]<Activity size={12} /> : <CheckCircle2 size={12} />}{status}</span></td></>)} [cite: 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100]
+                          </tr>
+                          {(isDanger || isResolved || isProd) && (
+                            <tr className="bg-slate-50/20"><td colSpan={isProd ? 6 : 5} className="px-10 py-5">
+                              {record.type === 'Environment' && (isDanger || isResolved) && (
+                                <div className="bg-white p-6 rounded-[2rem] border-2 border-slate-100 shadow-sm relative space-y-4 mb-4">
+                                  <div className="flex items-start gap-4"><div className={`p-2 rounded-xl ${isResolved ? 'bg-[#3b4083]/10 text-[#3b4083]' : 'bg-[#ffbc5e]/10 text-[#ffbc5e]'}`}><ClipboardCheck size={20} /></div><div className="flex-1 pr-40"><div className={`text-[9px] font-black uppercase tracking-[0.3em] mb-1 ${isResolved ? 'text-[#3b4083]' : 'text-[#ffbc5e]'}`}>Recommended Action</div><p className="text-[#3b4083] text-xs font-bold italic leading-relaxed whitespace-pre-line">{record.todo}</p></div>{!isResolved && <button onClick={() => { setCurrentEntryId(record.id); setView('extra'); [cite_start]}} className="absolute right-6 top-6 flex items-center gap-2 px-4 py-2 bg-[#ffbc5e] text-[#3b4083] rounded-xl text-[10px] font-black uppercase hover:scale-105 transition-all shadow-md active:scale-95"><RotateCcw size={12} /> Record 4 Points AquaBoy</button>}</div> [cite: 102, 103, 104, 105, 106, 107, 108]
+                                  {record.checks_4pts?.map((round, rIdx) => (
+                                    <div key={rIdx} className="space-y-2 mt-4 pt-4 border-t border-slate-50">
+                                      [cite_start]<div className="flex items-center justify-between"><div className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Check Round {rIdx + 1}</div><span className={`text-[8px] font-black px-2 py-0.5 rounded uppercase ${round.result === 'Pass' ? 'bg-[#0cc784] text-white' : 'bg-red-500 text-white'}`}>{round.result}</span></div> [cite: 109, 110, 111]
+                                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">{[1, 2, 3, 4].map(num => {
+                                        [cite_start]const stdObj = FABRIC_STANDARDS.find(s => s.label === round[`pos${num}_fabric`]); [cite: 111, 112, 113]
+                                        [cite_start]const isOver = parseFloat(round[`pos${num}_hum`]) > (stdObj?.limit || 0); [cite: 113]
+                                        return <div key={num} className={`bg-[#f9f8ff] p-3 rounded-2xl border ${isOver ? 'border-red-200 bg-red-50' : 'border-slate-100'}`}><div className="text-[8px] font-bold text-slate-400">P{num}</div><div className={`text-md font-black ${isOver ? [cite_start]'text-red-500' : 'text-[#3b4083]'}`}>{round[`pos${num}_hum`]}%</div><div className="text-[7px] font-medium text-[#7ab6b5] truncate">{round[`pos${num}_fabric`]}</div></div>; [cite: 114, 115, 116]
+                                      })}</div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                              {isProd && (
+                                <div className="space-y-12">
+                                  {record.product_history?.map((hist, idx) => (
+                                    [cite_start]<div key={idx} className="relative p-6 border-2 border-dashed border-slate-200 rounded-[2.5rem] bg-slate-50/50"><div className="absolute -top-3 left-8 px-4 py-1 bg-slate-400 text-white rounded-full text-[8px] font-black uppercase tracking-[0.2em] flex items-center gap-1.5 shadow-sm"><HistoryIcon size={10} /> Previous Round {idx + 1} ({new Date(hist.timestamp).toLocaleTimeString()})</div><div className="grid md:grid-cols-2 gap-8 mt-4">{renderProductSets("Semi-Product History", Layers, hist.semi_sets, calculateSectionRisk(hist.semi_sets))}{renderProductSets("Finished Product History", Box, hist.product_sets, calculateSectionRisk(hist.product_sets))}</div></div> [cite: 120, 121, 122, 123]
+                                  ))}
+                                  <div className="relative"><div className="grid md:grid-cols-2 gap-8">{renderProductSets("Semi-Product Checks", Layers, record.semi_sets, calculateSectionRisk(record.semi_sets))}{renderProductSets("Finished Product Checks", Box, record.product_sets, calculateSectionRisk(record.product_sets))}</div>{isDanger && <div className="mt-8 pt-6 border-t border-slate-100 flex justify-end"><button onClick={() => { setCurrentEntryId(record.id); setView('extra_product'); [cite_start]}} className="flex items-center gap-2 px-6 py-3 bg-[#ffbc5e] text-[#3b4083] rounded-2xl font-black uppercase text-xs hover:scale-105 transition-all shadow-lg active:scale-95"><RefreshCw size={14} /> Re-check Product Sets</button></div>}</div> [cite: 125, 126, 127, 128, 129]
+                                </div>
+                              )}
+                            </td></tr>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  const FormView = () => {
+    [cite_start]const isProd = isSewingRoom(selectedDept) && activeTypeTab === 'Product'; [cite: 135]
+    [cite_start]const [form, setForm] = useState({ temperature: '', humidity: '', ampm: getAMPMOptions(selectedDept)[0], user: '', room: isProd ? 'A' : '', line: isProd ? 'PD-SA01' : '' }); [cite: 136]
+    [cite_start]const initialSet = { cjo: '', po: '', fabric: '', hum: '' }; [cite: 137]
+    [cite_start]const [semiSets, setSemiSets] = useState([{ ...initialSet }, { ...initialSet }, { ...initialSet }]); [cite: 138]
+    [cite_start]const [prodSets, setProdSets] = useState([{ ...initialSet }, { ...initialSet }, { ...initialSet }]); [cite: 139]
+    [cite_start]const [submitting, setSubmitting] = useState(false); [cite: 139]
+
+    const handleSubmit = async (e) => {
+      [cite_start]e.preventDefault(); [cite: 140]
+      [cite_start]setSubmitting(true); [cite: 140]
+      try {
+        [cite_start]const cleanSemi = semiSets.filter(s => s.cjo.trim() !== '' || s.hum !== ''); [cite: 141]
+        [cite_start]const cleanProd = prodSets.filter(s => s.cjo.trim() !== '' || s.hum !== ''); [cite: 142]
+        await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'records'), { 
+          ...form, semi_sets: isProd ? cleanSemi : [], product_sets: isProd ? cleanProd : [],
+          factory: selectedFactory, department: selectedDept, type: isSewingRoom(selectedDept) ? activeTypeTab : 'Environment',
+          timestamp: Timestamp.now(), date: new Date().toLocaleDateString('th-TH'), 
+          todo: getTodoText(selectedDept), product_history: [] 
+        [cite_start]}); [cite: 143, 144, 145, 146, 147]
+        setView('dashboard');
+      } catch (err) { console.error(err); } finally { setSubmitting(false); [cite_start]} [cite: 147, 148]
+    };
+
+    return (
+      <div className="max-w-5xl mx-auto p-4 animate-in slide-in-from-bottom-4 duration-500 pb-20">
+        [cite_start]<button onClick={() => setView('dashboard')} className="flex items-center gap-2 text-[#3b4083] mb-8 font-black uppercase text-sm group"><ChevronLeft size={20} className="group-hover:-translate-x-1 transition-transform" /> Discard</button> [cite: 148]
+        <div className="bg-white rounded-[3rem] shadow-2xl overflow-hidden border border-[#F1EDFF]">
+          <div className="bg-[#3b4083] p-10 text-white flex justify-between items-center"><div><h2 className="text-3xl font-black uppercase tracking-tighter leading-tight">New Entry Log</h2><p className="text-[#8f8cb8] font-bold mt-1 uppercase text-xs">{selectedFactory} | [cite_start]{selectedDept}</p></div><div className="bg-[#dbf2f2] text-[#3b4083] px-6 py-2 rounded-2xl text-[11px] font-black uppercase shadow-lg border border-white/20 tracking-widest">{activeTypeTab} Mode</div></div> [cite: 148, 149]
+          <form onSubmit={handleSubmit} className="p-10 space-y-12">
+            {!isProd ? (<><div className="grid grid-cols-2 gap-8"><div className="space-y-2"><label className="text-[10px] font-black text-[#8f8cb8] uppercase tracking-widest">Temperature (°C)</label><input required type="number" step="0.1" value={form.temperature} onChange={e => setForm({...form, temperature: e.target.value})} className="w-full p-5 bg-[#f9f8ff] border-2 border-transparent focus:border-[#7ab6b5] focus:bg-white rounded-[1.5rem] outline-none text-xl font-black text-[#3b4083] shadow-inner" /></div><div className="space-y-2"><label className="text-[10px] font-black text-[#8f8cb8] uppercase tracking-widest">Humidity (%)</label><input required type="number" step="0.1" value={form.humidity} onChange={e => setForm({...form, humidity: e.target.value})} className={`w-full p-5 bg-[#f9f8ff] border-2 focus:bg-white rounded-[1.5rem] outline-none text-xl font-black shadow-inner transition-all ${checkHumidityDanger(form.humidity, selectedDept) ? 'border-[#ffbc5e] text-[#ffbc5e]' : 'border-transparent text-[#3b4083]'}`} /></div></div><div className="grid grid-cols-1 md:grid-cols-2 gap-8"><div className="space-y-2"><label className="text-[10px] font-black text-[#8f8cb8] uppercase tracking-widest">Time Slot</label><select value={form.ampm} onChange={e => setForm({...form, ampm: e.target.value})} className="w-full p-5 bg-[#f9f8ff] rounded-[1.5rem] outline-none font-bold text-[#3b4083] appearance-none cursor-pointer">{getAMPMOptions(selectedDept).map(opt => <option key={opt} value={opt}>{opt}</option>)}</select></div><div className="space-y-2"><label className="text-[10px] font-black text-[#8f8cb8] uppercase tracking-widest">Operator Name</label><input required type="text" value={form.user} onChange={e => setForm({...form, user: e.target.value})} className="w-full p-5 bg-[#f9f8ff] border-2 border-transparent focus:border-[#7ab6b5] rounded-[1.5rem] outline-none font-bold text-[#3b4083] shadow-inner transition-all" placeholder="Your Name" /></div></div></>) : (
+              <div className="space-y-12 animate-in fade-in duration-500">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 p-8 bg-[#F1EDFF]/40 rounded-[2.5rem] border border-[#3b4083]/10">
+                  [cite_start]<div className="space-y-2"><label className="text-[10px] font-black text-[#8f8cb8] uppercase tracking-[0.2em] flex items-center gap-1"><MapIcon size={12}/> Room Selection</label><select required value={form.room} onChange={e => setForm({...form, room: e.target.value, line: ROOM_LINE_DATA[e.target.value][0]})} className="w-full p-5 bg-white border border-[#F1EDFF] rounded-[1.5rem] outline-none font-black text-[#3b4083] shadow-sm appearance-none cursor-pointer">{['A', 'B', 'H'].map(r => <option key={r} value={r}>Room {r}</option>)}</select></div> [cite: 154]
+                  [cite_start]<div className="space-y-2"><label className="text-[10px] font-black text-[#8f8cb8] uppercase tracking-[0.2em] flex items-center gap-1"><Layers size={12}/> Line Selection</label><select required value={form.line} onChange={e => setForm({...form, line: e.target.value})} className="w-full p-5 bg-white border border-[#F1EDFF] rounded-[1.5rem] outline-none font-black text-[#3b4083] shadow-sm appearance-none cursor-pointer">{(ROOM_LINE_DATA[form.room] || []).map(l => <option key={l} value={l}>{l}</option>)}</select></div> [cite: 154, 155, 156]
+                  [cite_start]<div className="space-y-2"><label className="text-[10px] font-black text-[#8f8cb8] uppercase tracking-widest flex items-center gap-1"><Clock size={12}/> Time Slot</label><select value={form.ampm} onChange={e => setForm({...form, ampm: e.target.value})} className="w-full p-5 bg-white border border-[#F1EDFF] rounded-[1.5rem] outline-none font-bold text-[#3b4083] appearance-none cursor-pointer">{getAMPMOptions(selectedDept).map(opt => <option key={opt} value={opt}>{opt}</option>)}</select></div> [cite: 156]
+                  [cite_start]<div className="space-y-2"><label className="text-[10px] font-black text-[#8f8cb8] uppercase tracking-widest flex items-center gap-1"><UserIcon size={12}/> Operator Name</label><input required type="text" value={form.user} onChange={e => setForm({...form, user: e.target.value})} className="w-full p-5 bg-white border border-[#F1EDFF] focus:border-[#7ab6b5] rounded-[1.5rem] outline-none font-bold text-[#3b4083] shadow-sm transition-all" placeholder="Enter Operator Name" /></div> [cite: 156, 157]
+                </div>
+                [cite_start]<ProductDataInputs title="Semi-Product Checks" icon={Layers} sets={semiSets} setter={setSemiSets} colorClass="bg-[#3b4083]/10 text-[#3b4083]" /> [cite: 157]
+                [cite_start]<ProductDataInputs title="Finished Product Checks" icon={Box} sets={prodSets} setter={setProdSets} colorClass="bg-[#0cc784]/10 text-[#0cc784]" /> [cite: 157]
+              </div>
+            )}
+            <button disabled={submitting} type="submit" className="w-full py-5 bg-[#3b4083] text-white rounded-[2rem] font-black text-lg shadow-xl uppercase tracking-[0.3em] hover:bg-[#2e3266] active:scale-95 transition-all">{submitting ? [cite_start]'Processing...' : 'SAVE'}</button> [cite: 158, 159]
+          </form>
+        </div>
+      </div>
+    );
+  };
+
+  const ExtraProductFormView = () => {
+    [cite_start]const initialSet = { cjo: '', po: '', fabric: '', hum: '' }; [cite: 160]
+    [cite_start]const [semiSets, setSemiSets] = useState([{ ...initialSet }, { ...initialSet }, { ...initialSet }]); [cite: 161]
+    [cite_start]const [prodSets, setProdSets] = useState([{ ...initialSet }, { ...initialSet }, { ...initialSet }]); [cite: 162]
+    [cite_start]const [updating, setUpdating] = useState(false); [cite: 162]
+
+    const handleUpdate = async (e) => {
+      [cite_start]e.preventDefault(); [cite: 163]
+      [cite_start]const cleanSemi = semiSets.filter(s => s.cjo.trim() !== '' || s.hum !== ''), cleanProd = prodSets.filter(s => s.cjo.trim() !== '' || s.hum !== ''); [cite: 164, 165]
+      [cite_start]const allPassed = calculateSectionRisk(cleanSemi)?.label !== "High Risk" && calculateSectionRisk(cleanProd)?.label !== "High Risk"; [cite: 165, 166]
+      [cite_start]setUpdating(true); [cite: 166]
+      try {
+        [cite_start]const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'records', currentEntryId); [cite: 167]
+        [cite_start]const rec = records.find(r => r.id === currentEntryId); [cite: 168]
+        await updateDoc(docRef, {
+          product_history: arrayUnion({ semi_sets: rec.semi_sets, product_sets: rec.product_sets, timestamp: new Date().toISOString() }),
+          semi_sets: cleanSemi, product_sets: cleanProd, status: allPassed ? 'Resolved' : 'Take Action'
+        [cite_start]}); [cite: 168]
+        setView('dashboard');
+      } catch (err) { console.error(err); } finally { setUpdating(false); [cite_start]} [cite: 169]
+    };
+
+    return (
+      <div className="max-w-5xl mx-auto p-4 animate-in slide-in-from-bottom-4 duration-500 pb-20">
+        <div className="bg-white rounded-[3rem] shadow-2xl border-2 border-[#ffbc5e] overflow-hidden">
+          [cite_start]<div className="bg-[#ffbc5e] p-8 text-[#3b4083] flex items-center justify-between"><div className="flex items-center gap-3"><div className="p-3 bg-[#3b4083] text-white rounded-2xl shadow-lg"><RefreshCw size={24} /></div><h2 className="text-2xl font-black uppercase">Re-check Product Sets</h2></div><X className="cursor-pointer" onClick={() => setView('dashboard')} /></div> [cite: 170]
+          <form onSubmit={handleUpdate} className="p-10 space-y-12 bg-[#f9f8ff]">
+            [cite_start]<ProductDataInputs title="New Semi-Product Monitoring" icon={Layers} sets={semiSets} setter={setSemiSets} colorClass="bg-[#3b4083]/10 text-[#3b4083]" /><ProductDataInputs title="New Finished Product Monitoring" icon={Box} sets={prodSets} setter={setProdSets} colorClass="bg-[#0cc784]/10 text-[#0cc784]" /> [cite: 170, 171]
+            <div className="flex gap-4"><button disabled={updating} type="submit" className="flex-1 py-5 bg-[#3b4083] text-white rounded-[2rem] font-black text-lg shadow-xl active:scale-95 transition-all uppercase tracking-widest">{updating ? [cite_start]<Loader2 className="animate-spin" /> : 'SAVE'}</button></div> [cite: 171, 172]
+          </form>
+        </div>
+      </div>
+    );
+  };
+
+  const ExtraFormView = () => {
+    [cite_start]const def = FABRIC_STANDARDS[0].label; [cite: 173]
+    [cite_start]const [pts, setPts] = useState({ pos1_hum: '', pos1_fabric: def, pos2_hum: '', pos2_fabric: def, pos3_hum: '', pos3_fabric: def, pos4_hum: '', pos4_fabric: def }); [cite: 174]
+    [cite_start]const [updating, setUpdating] = useState(false); [cite: 175]
+    
+    const handleUpdate = async (e) => {
+      [cite_start]e.preventDefault(); [cite: 175]
+      [cite_start]let passed = true; [cite: 176]
+      for (let i = 1; i <= 4; i++) {
+        [cite_start]const std = FABRIC_STANDARDS.find(s => s.label === pts[`pos${i}_fabric`]); [cite: 177]
+        [cite_start]if (parseFloat(pts[`pos${i}_hum`]) > (std?.limit || 0)) passed = false; [cite: 178]
+      }
+      [cite_start]setUpdating(true); [cite: 178]
+      try {
+        [cite_start]await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'records', currentEntryId), { checks_4pts: arrayUnion({ ...pts, timestamp: new Date().toISOString(), result: passed ? 'Pass' : 'Fail' }), status: passed ? 'Resolved' : 'Take Action' }); [cite: 179]
+        setView('dashboard');
+      } catch (err) { console.error(err); } finally { setUpdating(false); [cite_start]} [cite: 180]
+    };
+
+    return (
+      <div className="max-w-5xl mx-auto p-4 animate-in slide-in-from-bottom-4 duration-500 pb-20">
+        <div className="bg-white rounded-[3rem] shadow-2xl border-2 border-[#ffbc5e] overflow-hidden">
+          [cite_start]<div className="bg-[#ffbc5e] p-8 text-[#3b4083] flex items-center justify-between"><div className="flex items-center gap-3"><div className="p-3 bg-[#3b4083] text-white rounded-2xl shadow-lg"><MapPin size={24} /></div><h2 className="text-2xl font-black uppercase">Standard Check</h2></div><RotateCcw size={32} /></div> [cite: 181]
+          <form onSubmit={handleUpdate} className="p-10 space-y-8 bg-[#f9f8ff]">
+            <div className="grid md:grid-cols-2 gap-8">{[1, 2, 3, 4].map(num => (
+              [cite_start]<div key={num} className="p-6 bg-white rounded-[2.5rem] border-2 border-[#F1EDFF] shadow-sm hover:border-[#ffbc5e] transition-all"><div className="flex items-center gap-2 text-[#3b4083] font-black text-xs uppercase tracking-widest"><span className="w-6 h-6 rounded-lg flex items-center justify-center text-[10px] text-white bg-[#ffbc5e]">{num}</span> Position {num}</div><div className="space-y-1"><label className="text-[9px] font-black text-[#8f8cb8] uppercase tracking-wider">Fabric Type</label><select required value={pts[`pos${num}_fabric`]} onChange={e => setPts({...pts, [`pos${num}_fabric`]: e.target.value})} className="w-full p-4 bg-[#f9f8ff] rounded-xl outline-none font-bold text-[#3b4083] text-[11px] appearance-none cursor-pointer border border-transparent focus:border-[#7ab6b5]">{FABRIC_STANDARDS.map(s => <option key={s.label} value={s.label}>{s.label}</option>)}</select></div><div className="space-y-1"><label className="text-[9px] font-black text-[#8f8cb8] uppercase tracking-wider">Humidity (%)</label><input required type="number" step="1" value={pts[`pos${num}_hum`]} onChange={e => setPts({...pts, [`pos${num}_hum`]: e.target.value})} className="w-full p-4 bg-[#f9f8ff] border-2 border-transparent rounded-xl outline-none font-black text-lg focus:border-[#ffbc5e] focus:bg-white transition-all" placeholder="0" /></div></div> [cite: 182, 183]
+            ))}</div>
+            <div className="flex gap-4"><button disabled={updating} type="submit" className="flex-1 py-5 bg-[#3b4083] text-white rounded-[2rem] font-black text-lg shadow-xl active:scale-95 transition-all uppercase tracking-widest">{updating ? [cite_start]<Loader2 className="animate-spin" /> : 'SAVE'}</button></div> [cite: 184, 185]
+          </form>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="min-h-screen bg-[#f9f8ff] font-sans text-[#3b4083] pb-20 selection:bg-[#dbf2f2]">
+      <nav className="sticky top-0 z-50 bg-white/80 backdrop-blur-xl border-b border-[#F1EDFF] px-8 py-5 flex items-center justify-between shadow-sm">
+        [cite_start]<div className="flex items-center gap-3"><div className="w-10 h-10 bg-[#3b4083] rounded-xl flex items-center justify-center text-white shadow-lg"><Thermometer size={22} strokeWidth={3} /></div><span className="font-black text-xl tracking-tighter uppercase">HygroTrack</span></div> [cite: 186]
+        [cite_start]<div className="flex items-center gap-2 px-4 py-2 bg-[#0cc784]/10 rounded-full border border-[#0cc784]/20"><div className="w-1.5 h-1.5 bg-[#0cc784] rounded-full animate-pulse"></div><span className="text-[10px] font-black text-[#0cc784] uppercase tracking-widest tracking-[0.2em]">Live Sync</span></div> [cite: 186]
+      </nav>
+      <main className="mt-8 px-4">
+        {view === 'home' && <HomeView />}{view === 'dashboard' && <DashboardView />}{view === 'form' && <FormView />}{view === 'extra' && <ExtraFormView />}{view === 'extra_product' && <ExtraProductFormView />}
+      </main>
+      {loading && view !== 'home' && (
+        [cite_start]<div className="fixed inset-0 bg-[#f9f8ff]/80 flex items-center justify-center z-[100] backdrop-blur-md"><div className="flex flex-col items-center gap-4"><div className="w-12 h-12 border-4 border-[#3b4083] border-t-transparent rounded-full animate-spin"></div><p className="text-[10px] font-black uppercase tracking-widest text-[#3b4083]">Syncing Database...</p></div></div> [cite: 187, 188]
+      )}
+    </div>
+  );
+};
+
+export default App;
